@@ -12,13 +12,14 @@ ServerSignature Off
     RewriteEngine On
     RewriteBase /
 
-    # Redirect trailing slashes
-    RewriteRule ^(.*)/$ /$1 [L,R=301]
-
-    # Serve static assets directly if they exist
+    # Serve static assets and directories directly if they exist
     RewriteCond %{REQUEST_FILENAME} -f [OR]
     RewriteCond %{REQUEST_FILENAME} -d
     RewriteRule ^ - [L]
+
+    # Redirect trailing slashes for non-directories
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^(.*)/$ /$1 [L,R=301]
 
     # Map /login -> /login.php, etc.
     RewriteCond %{DOCUMENT_ROOT}/$1.php -f

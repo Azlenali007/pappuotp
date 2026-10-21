@@ -22,6 +22,36 @@ function is_installed(): bool {
 }
 
 /**
+ * Safe diagnostic logging for installer events (never logs passwords or secrets)
+ */
+function installer_log(string $action, string $message, array $context = []): void {
+    $logDir = dirname(__DIR__, 2) . '/storage/logs';
+    if (!is_dir($logDir)) {
+        @mkdir($logDir, 0750, true);
+    }
+    $logFile = $logDir . '/installer.log';
+
+    // Strip sensitive fields
+    $sanitized = $context;
+    foreach (['password', 'pass', 'db_pass', 'secret', 'key'] as $secretKey) {
+        if (isset($sanitized[$secretKey])) {
+            $sanitized[$secretKey] = '[REDACTED]';
+        }
+    }
+
+    $entry = sprintf(
+        "[%s] [IP: %s] [%s] %s %s\n",
+        date('Y-m-d H:i:s'),
+        $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1',
+        strtoupper($action),
+        $message,
+        !empty($sanitized) ? json_encode($sanitized, JSON_UNESCAPED_SLASHES) : ''
+    );
+
+    @file_put_contents($logFile, $entry, FILE_APPEND | LOCK_EX);
+}
+
+/**
  * Enforce installation lock - stop and show warning if already installed
  */
 function ensure_not_installed(): void {
@@ -107,6 +137,12 @@ function test_db_connection(string $host, string $port, string $dbname, string $
         // Count existing tables
         $tables = $pdo->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
         
+        installer_log('DB_TEST_SUCCESS', "Database connection verified successfully on {$host}:{$port}", [
+            'dbname' => $dbname,
+            'tables_count' => count($tables),
+            'version' => (string)$version
+        ]);
+
         return [
             'success' => true,
             'message' => 'Successfully connected to database!',
@@ -126,6 +162,13 @@ function test_db_connection(string $host, string $port, string $dbname, string $
         } else {
             $safeMsg = 'Database connection failed: ' . htmlspecialchars($errorMsg);
         }
+
+        installer_log('DB_TEST_FAILED', $safeMsg, [
+            'host' => $host,
+            'port' => $port,
+            'dbname' => $dbname,
+            'username' => $username
+        ]);
         
         return [
             'success' => false,

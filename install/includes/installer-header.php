@@ -9,7 +9,7 @@ $steps = [
     1 => ['name' => 'Welcome', 'url' => '/install/index.php'],
     2 => ['name' => 'Requirements', 'url' => '/install/requirements.php'],
     3 => ['name' => 'Database', 'url' => '/install/database.php'],
-    4 => ['name' => 'Install Schema', 'url' => '#'],
+    4 => ['name' => 'Install Schema', 'url' => '/install/install-db.php'],
     5 => ['name' => 'Admin Account', 'url' => '/install/admin-account.php'],
     6 => ['name' => 'Configuration', 'url' => '/install/configuration.php'],
     7 => ['name' => 'Finish', 'url' => '/install/finish.php'],

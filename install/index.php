@@ -6,19 +6,40 @@ $stepNumber = 1;
 $pageTitle = 'Welcome to OTP Platform Setup';
 require_once __DIR__ . '/includes/installer-header.php';
 
-// Detect whether database already has existing tables
+// Detect whether database already has existing tables safely without calling die()
 $hasExistingData = false;
 $existingTablesCount = 0;
+
+$checkHost = getenv('DB_HOST') ?: '127.0.0.1';
+$checkPort = getenv('DB_PORT') ?: '3306';
+$checkDbname = getenv('DB_NAME') ?: 'otp_platform';
+$checkUsername = getenv('DB_USER') ?: 'otp_user';
+$checkPassword = getenv('DB_PASS') !== false ? getenv('DB_PASS') : 'otp_password';
+
+$dbCfgFile = dirname(__DIR__) . '/config/db-config.php';
+if (file_exists($dbCfgFile)) {
+    $localCfg = @include $dbCfgFile;
+    if (is_array($localCfg)) {
+        $checkHost = $localCfg['host'] ?? $checkHost;
+        $checkPort = $localCfg['port'] ?? $checkPort;
+        $checkDbname = $localCfg['dbname'] ?? $checkDbname;
+        $checkUsername = $localCfg['username'] ?? $checkUsername;
+        $checkPassword = $localCfg['password'] ?? $checkPassword;
+    }
+}
+
 try {
-    require_once dirname(__DIR__) . '/config/database.php';
-    $db = Database::getConnection();
-    $tables = $db->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
+    $pdoCheck = new PDO("mysql:host={$checkHost};port={$checkPort};dbname={$checkDbname};charset=utf8mb4", $checkUsername, $checkPassword, [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_TIMEOUT => 2,
+    ]);
+    $tables = $pdoCheck->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
     $existingTablesCount = count($tables);
     if ($existingTablesCount > 0) {
         $hasExistingData = true;
     }
 } catch (\Throwable $e) {
-    // If connection not configured yet, it's definitely a fresh installation
+    // Database not configured or unreachable yet; normal for a fresh installation
     $hasExistingData = false;
 }
 ?>
