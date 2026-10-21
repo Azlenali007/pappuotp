@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 40" fill="none">
+  <rect x="2" y="4" width="32" height="32" rx="8" fill="#7C3AED"/>
+  <path d="M18 10L10 13V19C10 24 13.5 28.5 18 30C22.5 28.5 26 24 26 19V13L18 10Z" fill="#6D28D9"/>
+  <path d="M15 19.5L17 21.5L21.5 17" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="44" y="26" font-family="system-ui, -apple-system, sans-serif" font-weight="800" font-size="18" fill="#1E293B">OTP <tspan fill="#7C3AED">Services</tspan></text>
+</svg>

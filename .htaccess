@@ -1,0 +1,29 @@
+# Security and clean URL handling for Apache / LiteSpeed
+Options -Indexes
+ServerSignature Off
+
+# Prevent access to dot files, configuration, logs, and SQL
+<FilesMatch "^\.|\.sql$|\.env$|\.log$|\.md$|composer\.json">
+    Require all denied
+</FilesMatch>
+
+# Enable Rewrite Engine
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+
+    # Redirect trailing slashes
+    RewriteRule ^(.*)/$ /$1 [L,R=301]
+
+    # Serve static assets directly if they exist
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # Map /login -> /login.php, etc.
+    RewriteCond %{DOCUMENT_ROOT}/$1.php -f
+    RewriteRule ^([a-zA-Z0-9_-]+)$ $1.php [L]
+
+    # Fallback to index.php
+    RewriteRule ^(.*)$ index.php [QSA,L]
+</IfModule>

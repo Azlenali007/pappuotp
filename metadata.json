@@ -1,0 +1,6 @@
+{
+  "name": "OTP Services - Full-Stack Verification Platform",
+  "description": "Modern, secure, full-stack OTP service marketplace with user panel, super admin panel, live verification order tracking, wallet management, and service importer.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
