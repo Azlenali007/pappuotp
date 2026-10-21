@@ -20,6 +20,18 @@ class Database {
         $username = getenv('DB_USER') ?: 'otp_user';
         $password = getenv('DB_PASS') !== false ? getenv('DB_PASS') : 'otp_password';
 
+        $localConfigFile = __DIR__ . '/db-config.php';
+        if (file_exists($localConfigFile)) {
+            $dbConfig = @include $localConfigFile;
+            if (is_array($dbConfig)) {
+                $host = $dbConfig['host'] ?? $host;
+                $port = $dbConfig['port'] ?? $port;
+                $dbname = $dbConfig['dbname'] ?? $dbname;
+                $username = $dbConfig['username'] ?? $username;
+                $password = $dbConfig['password'] ?? $password;
+            }
+        }
+
         $dsn = "mysql:host={$host};port={$port};dbname={$dbname};charset=utf8mb4";
 
         $options = [

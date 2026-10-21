@@ -1,0 +1,33 @@
+/* Installer Specific Styles & Animations */
+
+.installer-step-active {
+    background-color: #7c3aed;
+    color: #ffffff;
+    box-shadow: 0 4px 14px 0 rgba(124, 58, 237, 0.35);
+}
+
+.installer-step-completed {
+    background-color: #10b981;
+    color: #ffffff;
+}
+
+.installer-step-pending {
+    background-color: #f1f5f9;
+    color: #94a3b8;
+}
+
+/* Spinner */
+.installer-spinner {
+    border: 3px solid rgba(255, 255, 255, 0.3);
+    border-top: 3px solid #ffffff;
+    border-radius: 50%;
+    width: 18px;
+    height: 18px;
+    animation: spin 0.8s linear infinite;
+    display: inline-block;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
