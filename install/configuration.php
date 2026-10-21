@@ -2,11 +2,12 @@
 /**
  * Step 6: Application Configuration Screen
  */
+require_once __DIR__ . '/includes/installer-auth.php';
+
 $stepNumber = 6;
 $pageTitle = 'Application Settings';
-require_once __DIR__ . '/includes/installer-header.php';
 
-$dbConfig = $_SESSION['installer_db'] ?? null;
+$dbConfig = get_active_installer_db();
 if (!$dbConfig) {
     header('Location: /install/database.php');
     exit;
@@ -67,16 +68,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $result = save_installer_configuration($pdo, $dbConfig, $siteSettings);
             if ($result['success']) {
                 $_SESSION['installer_config'] = $siteSettings;
+                record_completed_step(6);
+                installer_log('STEP6_SUCCESS', "Application configuration stored and locked", ['site_name' => $siteName]);
                 header('Location: /install/finish.php');
                 exit;
             } else {
                 $error = $result['error'];
+                installer_log('STEP6_FAILED', $error);
             }
         } catch (\PDOException $e) {
             $error = 'Database error: ' . $e->getMessage();
+            installer_log('STEP6_ERROR', $error);
         }
     }
 }
+
+require_once __DIR__ . '/includes/installer-header.php';
 ?>
 
 <div class="p-6 sm:p-10 space-y-8">

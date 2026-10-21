@@ -2,11 +2,12 @@
 /**
  * Step 4: Database Schema Installation Screen
  */
+require_once __DIR__ . '/includes/installer-auth.php';
+
 $stepNumber = 4;
 $pageTitle = 'Install Database Schema';
-require_once __DIR__ . '/includes/installer-header.php';
 
-$dbConfig = $_SESSION['installer_db'] ?? null;
+$dbConfig = get_active_installer_db();
 if (!$dbConfig) {
     header('Location: /install/database.php');
     exit;
@@ -40,16 +41,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($result['success']) {
                 seed_essential_data($pdo);
                 $_SESSION['installer_db_installed'] = true;
+                record_completed_step(4);
+                installer_log('STEP4_SUCCESS', "Database schema installed successfully", [
+                    'queries' => $result['queries_executed'] ?? 0
+                ]);
                 header('Location: /install/admin-account.php');
                 exit;
             } else {
                 $error = $result['error'] ?? 'Schema execution failed.';
+                installer_log('STEP4_FAILED', $error);
             }
         } catch (\Throwable $e) {
             $error = 'Database installation error: ' . $e->getMessage();
+            installer_log('STEP4_ERROR', $error);
         }
     }
 }
+
+require_once __DIR__ . '/includes/installer-header.php';
 ?>
 
 <div class="p-6 sm:p-10 space-y-8">
@@ -143,8 +152,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
     </div>
 
+    <!-- Schema Progress Container (AJAX feedback) -->
+    <div id="schema-progress-container" class="hidden space-y-3 p-5 rounded-2xl bg-purple-50/70 border border-purple-200/80">
+        <div class="flex items-center justify-between text-xs font-bold text-purple-900">
+            <span id="schema-progress-status">Initializing database schema installation...</span>
+            <span id="schema-progress-percent">0%</span>
+        </div>
+        <div class="w-full bg-purple-200/60 h-2.5 rounded-full overflow-hidden">
+            <div id="schema-progress-bar" class="bg-purple-600 h-2.5 rounded-full transition-all duration-300 w-0"></div>
+        </div>
+        <div id="schema-progress-detail" class="text-xs text-purple-700">Connecting to MySQL database...</div>
+    </div>
+
     <!-- Actions -->
-    <form method="POST">
+    <form method="POST" id="schema-install-form">
         <input type="hidden" name="csrf_token" value="<?= get_installer_csrf_token() ?>">
         <div class="pt-4 border-t border-slate-100 flex items-center justify-between">
             <a href="/install/database.php" class="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50 transition-colors">

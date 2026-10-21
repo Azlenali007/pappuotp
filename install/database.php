@@ -2,16 +2,18 @@
 /**
  * Step 3: Database Connection Configuration
  */
+require_once __DIR__ . '/includes/installer-auth.php';
+
 $stepNumber = 3;
 $pageTitle = 'Database Setup';
-require_once __DIR__ . '/includes/installer-header.php';
-
 $error = '';
-$host = $_SESSION['installer_db']['host'] ?? '127.0.0.1';
-$port = $_SESSION['installer_db']['port'] ?? '3306';
-$dbname = $_SESSION['installer_db']['dbname'] ?? 'otp_platform';
-$username = $_SESSION['installer_db']['username'] ?? 'otp_user';
-$password = $_SESSION['installer_db']['password'] ?? '';
+
+$currentDb = get_active_installer_db();
+$host = $currentDb['host'] ?? '127.0.0.1';
+$port = (string)($currentDb['port'] ?? '3306');
+$dbname = $currentDb['dbname'] ?? 'otp_platform';
+$username = $currentDb['username'] ?? 'otp_user';
+$password = $currentDb['password'] ?? 'otp_password';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verify_installer_csrf_token($_POST['csrf_token'] ?? '')) {
@@ -34,6 +36,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'existing_tables' => $test['existing_tables'] ?? [],
                 'tables_count' => $test['tables_count'] ?? 0
             ];
+            record_completed_step(3);
+            installer_log('STEP3_ADVANCE', "Database credentials validated; proceeding to Step 4", ['dbname' => $dbname]);
             header('Location: /install/install-db.php');
             exit;
         } else {
@@ -41,6 +45,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 }
+
+require_once __DIR__ . '/includes/installer-header.php';
 ?>
 
 <div class="p-6 sm:p-10 space-y-8">

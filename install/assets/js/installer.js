@@ -82,6 +82,94 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
+    // 2. Interactive Schema Installation with Visual Progress
+    const schemaForm = document.getElementById('schema-install-form');
+    const schemaBtn = document.getElementById('install-schema-btn');
+    const progressContainer = document.getElementById('schema-progress-container');
+    const progressBar = document.getElementById('schema-progress-bar');
+    const progressStatus = document.getElementById('schema-progress-status');
+    const progressPercent = document.getElementById('schema-progress-percent');
+    const progressDetail = document.getElementById('schema-progress-detail');
+
+    if (schemaForm && schemaBtn) {
+        schemaForm.addEventListener('submit', function (e) {
+            // If AJAX is supported, handle smoothly with live progress feedback
+            e.preventDefault();
+
+            const csrfTokenInput = schemaForm.querySelector('input[name="csrf_token"]');
+            const csrfToken = csrfTokenInput ? csrfTokenInput.value : '';
+
+            schemaBtn.disabled = true;
+            schemaBtn.innerHTML = '<span class="installer-spinner"></span> Installing Schema...';
+
+            if (progressContainer) {
+                progressContainer.classList.remove('hidden');
+            }
+
+            // Animate progress states
+            let currentP = 15;
+            if (progressBar) progressBar.style.width = '15%';
+            if (progressPercent) progressPercent.innerText = '15%';
+            if (progressStatus) progressStatus.innerText = 'Initializing MySQL connection...';
+
+            const pTimer = setInterval(() => {
+                if (currentP < 85) {
+                    currentP += 10;
+                    if (progressBar) progressBar.style.width = currentP + '%';
+                    if (progressPercent) progressPercent.innerText = currentP + '%';
+                    if (currentP === 35 && progressStatus) progressStatus.innerText = 'Creating database tables & columns...';
+                    if (currentP === 55 && progressStatus) progressStatus.innerText = 'Applying indexes, keys, and foreign constraints...';
+                    if (currentP === 75 && progressStatus) progressStatus.innerText = 'Seeding initial roles & categories...';
+                }
+            }, 300);
+
+            const formData = new FormData();
+            formData.append('csrf_token', csrfToken);
+
+            fetch('/install/process/install-database.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                clearInterval(pTimer);
+
+                if (data.success) {
+                    if (progressBar) progressBar.style.width = '100%';
+                    if (progressPercent) progressPercent.innerText = '100%';
+                    if (progressStatus) {
+                        progressStatus.className = 'text-emerald-700 font-bold';
+                        progressStatus.innerText = 'Database schema installed successfully!';
+                    }
+                    if (progressDetail) {
+                        progressDetail.className = 'text-xs text-emerald-600 font-medium';
+                        progressDetail.innerText = `${data.queries_count || 26} tables and definitions established. Redirecting to Step 5...`;
+                    }
+
+                    setTimeout(() => {
+                        window.location.href = '/install/admin-account.php';
+                    }, 800);
+                } else {
+                    schemaBtn.disabled = false;
+                    schemaBtn.innerHTML = '<span>Execute & Install Schema</span><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>';
+                    if (progressStatus) {
+                        progressStatus.className = 'text-rose-700 font-bold';
+                        progressStatus.innerText = 'Schema Installation Failed';
+                    }
+                    if (progressDetail) {
+                        progressDetail.className = 'text-xs text-rose-600 font-medium';
+                        progressDetail.innerText = data.error || 'Unknown error occurred. Please try again.';
+                    }
+                }
+            })
+            .catch(err => {
+                clearInterval(pTimer);
+                // On network error, fallback to standard form submit so server-side takes over
+                schemaForm.submit();
+            });
+        });
+    }
+
     // 2. Admin Password Strength Meter
     const adminPassInput = document.getElementById('admin_password');
     const adminPassMeter = document.getElementById('password-strength-meter');

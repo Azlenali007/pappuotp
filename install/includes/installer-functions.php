@@ -1,9 +1,12 @@
 <?php
-/**
- * Installer Helper Functions & State Protection
- */
+if (!ob_get_level()) {
+    ob_start();
+}
 
 if (session_status() === PHP_SESSION_NONE) {
+    @ini_set('session.cookie_httponly', '1');
+    @ini_set('session.use_only_cookies', '1');
+    @ini_set('session.cookie_samesite', 'Lax');
     session_start();
 }
 
@@ -12,6 +15,57 @@ if (session_status() === PHP_SESSION_NONE) {
  */
 function get_installer_lock_file(): string {
     return dirname(__DIR__, 2) . '/storage/private/installation.lock';
+}
+
+/**
+ * Track completed installer step server-side
+ */
+function record_completed_step(int $step): void {
+    if (!isset($_SESSION['installer_completed_steps'])) {
+        $_SESSION['installer_completed_steps'] = [];
+    }
+    if (!in_array($step, $_SESSION['installer_completed_steps'], true)) {
+        $_SESSION['installer_completed_steps'][] = $step;
+    }
+}
+
+/**
+ * Check if a step has already succeeded
+ */
+function is_step_completed(int $step): bool {
+    return in_array($step, $_SESSION['installer_completed_steps'] ?? [], true);
+}
+
+/**
+ * Retrieve database configuration with automatic session recovery
+ */
+function get_active_installer_db(): ?array {
+    if (!empty($_SESSION['installer_db']) && is_array($_SESSION['installer_db'])) {
+        return $_SESSION['installer_db'];
+    }
+
+    // Try recovering from config/db-config.php
+    $cfgPath = dirname(__DIR__, 2) . '/config/db-config.php';
+    if (file_exists($cfgPath)) {
+        $saved = @include $cfgPath;
+        if (is_array($saved) && !empty($saved['dbname']) && !empty($saved['username'])) {
+            $test = test_db_connection(
+                $saved['host'] ?? '127.0.0.1',
+                (string)($saved['port'] ?? 3306),
+                $saved['dbname'],
+                $saved['username'],
+                $saved['password'] ?? ''
+            );
+            if ($test['success']) {
+                $saved['existing_tables'] = $test['existing_tables'] ?? [];
+                $saved['tables_count'] = $test['tables_count'] ?? 0;
+                $_SESSION['installer_db'] = $saved;
+                return $saved;
+            }
+        }
+    }
+
+    return null;
 }
 
 /**

@@ -2,16 +2,20 @@
 /**
  * Step 7: Installation Summary & Locking
  */
+require_once __DIR__ . '/includes/installer-auth.php';
+
 $stepNumber = 7;
 $pageTitle = 'Installation Completed';
-require_once __DIR__ . '/includes/installer-header.php';
-
 $admin = $_SESSION['installer_admin'] ?? ['username' => 'admin', 'email' => 'admin@otprocket.com'];
-$dbConfig = $_SESSION['installer_db'] ?? ['dbname' => 'otp_platform', 'host' => '127.0.0.1'];
+$dbConfig = get_active_installer_db() ?? ['dbname' => 'otp_platform', 'host' => '127.0.0.1'];
 $siteConfig = $_SESSION['installer_config'] ?? ['site_name' => 'OTP Services', 'currency_symbol' => '₹'];
 
-// Create the installation lock now
+require_once __DIR__ . '/includes/installer-header.php';
+
+// Record completion and create installation lock
+record_completed_step(7);
 $lockCreated = create_installation_lock($admin['username'] ?? 'admin');
+installer_log('STEP7_FINISH', "Installation locked and finalized", ['admin' => $admin['username'] ?? 'admin']);
 
 // Clear sensitive installation session data now that installation is complete
 unset($_SESSION['installer_db']);

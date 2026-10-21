@@ -2,11 +2,12 @@
 /**
  * Step 5: Administrator Account Setup
  */
+require_once __DIR__ . '/includes/installer-auth.php';
+
 $stepNumber = 5;
 $pageTitle = 'Create Super Administrator';
-require_once __DIR__ . '/includes/installer-header.php';
 
-$dbConfig = $_SESSION['installer_db'] ?? null;
+$dbConfig = get_active_installer_db();
 if (!$dbConfig) {
     header('Location: /install/database.php');
     exit;
@@ -45,17 +46,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'email' => $email,
                         'id' => $result['admin_id']
                     ];
+                    record_completed_step(5);
+                    installer_log('STEP5_SUCCESS', "Super Administrator account created", ['username' => $username, 'email' => $email]);
                     header('Location: /install/configuration.php');
                     exit;
                 } else {
                     $error = $result['error'];
+                    installer_log('STEP5_FAILED', $error);
                 }
             } catch (\PDOException $e) {
                 $error = 'Database error: ' . $e->getMessage();
+                installer_log('STEP5_ERROR', $error);
             }
         }
     }
 }
+
+require_once __DIR__ . '/includes/installer-header.php';
 ?>
 
 <div class="p-6 sm:p-10 space-y-8">
