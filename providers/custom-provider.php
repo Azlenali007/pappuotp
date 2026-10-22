@@ -13,10 +13,89 @@ class CustomProviderAdapter implements ProviderInterface {
     protected ?string $apiKey;
     protected int $timeout;
 
-    public function __construct(string $apiUrl, ?string $apiKey = null, int $timeout = 15) {
-        $this->apiUrl = rtrim($apiUrl, '/');
-        $this->apiKey = $apiKey;
+    public function __construct(string $apiUrl, ?string $apiKey = null, int $timeout = 10) {
+        $this->apiUrl = rtrim(trim($apiUrl), '/');
+        $this->apiKey = $apiKey ? trim($apiKey) : null;
         $this->timeout = $timeout;
+    }
+
+    /**
+     * Test connection to provider API with real diagnostics
+     */
+    public function testConnection(): array {
+        $startTime = microtime(true);
+
+        if (empty($this->apiUrl) || !filter_var($this->apiUrl, FILTER_VALIDATE_URL)) {
+            return [
+                'success' => false,
+                'connected' => false,
+                'http_code' => 0,
+                'latency_ms' => 0,
+                'balance' => 0.00,
+                'services_count' => 0,
+                'sample_service' => null,
+                'error' => 'API endpoint base URL is empty or invalid (must start with http:// or https://).'
+            ];
+        }
+
+        // Try balance endpoint
+        $res = $this->makeRequest('GET', '/balance');
+        $httpCode = $res['http_code'] ?? 0;
+        $latency = round((microtime(true) - $startTime) * 1000);
+
+        // If returned 404, try query parameter style (?action=getBalance)
+        if ($httpCode === 404 || !$res) {
+            $res = $this->makeRequest('GET', '/?action=getBalance');
+            $httpCode = $res['http_code'] ?? $httpCode;
+            $latency = round((microtime(true) - $startTime) * 1000);
+        }
+
+        $connected = false;
+        $errorMessage = '';
+        $balance = 0.00;
+
+        if ($httpCode >= 200 && $httpCode < 400) {
+            $connected = true;
+            if (isset($res['balance'])) {
+                $balance = (float)$res['balance'];
+            } elseif (isset($res['data']['balance'])) {
+                $balance = (float)$res['data']['balance'];
+            } elseif (isset($res['raw_text'])) {
+                $raw = trim($res['raw_text']);
+                if (str_starts_with($raw, 'ACCESS_BALANCE:')) {
+                    $balance = (float)substr($raw, strlen('ACCESS_BALANCE:'));
+                } elseif (is_numeric($raw)) {
+                    $balance = (float)$raw;
+                }
+            }
+        } elseif ($httpCode === 401 || $httpCode === 403) {
+            $errorMessage = "Authentication failed (HTTP {$httpCode}). The API token/key is invalid or unauthorized.";
+        } elseif ($httpCode === 404) {
+            $errorMessage = "Endpoint not found (HTTP 404). The provider API base URL does not match the provider specification.";
+        } elseif ($httpCode === 0) {
+            $curlErr = $res['curl_error'] ?? 'Network unreachable or DNS lookup failed';
+            $errorMessage = "Connection failed: {$curlErr}. Please verify provider host name, firewall, and internet connectivity.";
+        } else {
+            $errorMessage = "Provider gateway responded with HTTP {$httpCode}.";
+        }
+
+        $services = [];
+        if ($connected) {
+            $services = $this->getServices();
+        }
+
+        return [
+            'success' => $connected,
+            'connected' => $connected,
+            'http_code' => $httpCode,
+            'latency_ms' => $latency,
+            'balance' => $balance,
+            'services' => $services,
+            'services_count' => count($services),
+            'sample_service' => $services[0] ?? null,
+            'raw_response' => $res,
+            'error' => $errorMessage ?: null
+        ];
     }
 
     /**
@@ -27,7 +106,7 @@ class CustomProviderAdapter implements ProviderInterface {
             return [];
         }
 
-        // Try standard REST endpoint /services or query action=getServices
+        // 1. Try standard REST endpoint /services or query action=getServices
         $response = $this->makeRequest('GET', '/services');
         if ($response && !empty($response['data']) && is_array($response['data'])) {
             return $response['data'];
@@ -36,19 +115,30 @@ class CustomProviderAdapter implements ProviderInterface {
             return $response['services'];
         }
 
-        // Check provider_services in database for this provider
-        $db = get_db();
-        $stmt = $db->prepare("
-            SELECT s.code, s.name, s.category, ps.provider_cost as cost 
-            FROM provider_services ps 
-            JOIN services s ON s.id = ps.service_id 
-            JOIN providers p ON p.id = ps.provider_id 
-            WHERE p.api_url = ?
-        ");
-        $stmt->execute([$this->apiUrl]);
-        $rows = $stmt->fetchAll();
-        if (!empty($rows)) {
-            return $rows;
+        // Try SMS-Activate query protocol ?action=getServices
+        $response = $this->makeRequest('GET', '/?action=getServices');
+        if ($response && !empty($response['services']) && is_array($response['services'])) {
+            return $response['services'];
+        }
+
+        // 2. Check local database for mapped services for this provider
+        try {
+            $db = get_db();
+            $stmt = $db->prepare("
+                SELECT s.code, s.name, sc.name as category, psm.provider_cost as cost 
+                FROM provider_service_mappings psm 
+                JOIN services s ON s.id = psm.service_id 
+                LEFT JOIN service_categories sc ON sc.id = s.category_id
+                JOIN providers p ON p.id = psm.provider_id 
+                WHERE p.api_url = ?
+            ");
+            $stmt->execute([$this->apiUrl]);
+            $rows = $stmt->fetchAll();
+            if (!empty($rows)) {
+                return $rows;
+            }
+        } catch (\Throwable $e) {
+            // graceful fallback
         }
 
         return [];
@@ -67,9 +157,13 @@ class CustomProviderAdapter implements ProviderInterface {
             return $response['data'];
         }
 
-        $db = get_db();
-        $stmt = $db->query("SELECT code, name, dial_code FROM countries WHERE is_active = 1 ORDER BY name ASC");
-        return $stmt->fetchAll() ?: [];
+        try {
+            $db = get_db();
+            $stmt = $db->query("SELECT code, name, dial_code FROM countries WHERE is_active = 1 ORDER BY name ASC");
+            return $stmt->fetchAll() ?: [];
+        } catch (\Throwable $e) {
+            return [];
+        }
     }
 
     /**
@@ -88,26 +182,29 @@ class CustomProviderAdapter implements ProviderInterface {
             ];
         }
 
-        // Check from provider_services table
-        $db = get_db();
-        $stmt = $db->prepare("
-            SELECT ps.provider_cost as cost, ps.stock_status as stock 
-            FROM provider_services ps 
-            JOIN services s ON s.id = ps.service_id 
-            JOIN providers p ON p.id = ps.provider_id 
-            WHERE s.code = ? AND p.api_url = ? 
-            LIMIT 1
-        ");
-        $stmt->execute([$service, $this->apiUrl]);
-        $row = $stmt->fetch();
+        try {
+            $db = get_db();
+            $stmt = $db->prepare("
+                SELECT psm.provider_cost as cost, IF(psm.is_available=1, 'available', 'out_of_stock') as stock 
+                FROM provider_service_mappings psm 
+                JOIN services s ON s.id = psm.service_id 
+                JOIN providers p ON p.id = psm.provider_id 
+                WHERE s.code = ? AND p.api_url = ? 
+                LIMIT 1
+            ");
+            $stmt->execute([$service, $this->apiUrl]);
+            $row = $stmt->fetch();
 
-        if ($row) {
-            return [
-                'service' => $service,
-                'country' => $country ?? 'IN',
-                'cost' => (float)$row['cost'],
-                'stock' => $row['stock']
-            ];
+            if ($row) {
+                return [
+                    'service' => $service,
+                    'country' => $country ?? 'IN',
+                    'cost' => (float)$row['cost'],
+                    'stock' => $row['stock']
+                ];
+            }
+        } catch (\Throwable $e) {
+            // graceful fallback
         }
 
         return [
@@ -129,7 +226,6 @@ class CustomProviderAdapter implements ProviderInterface {
             ];
         }
 
-        // Send purchase request to external provider gateway
         $payload = [
             'service' => $serviceCode,
             'country' => $countryCode,
@@ -139,7 +235,7 @@ class CustomProviderAdapter implements ProviderInterface {
         // 1. Try JSON POST /orders or /buyNumber
         $response = $this->makeRequest('POST', '/buyNumber', $payload);
 
-        // 2. If endpoint not found or provider uses SMS-Activate GET protocol
+        // 2. If endpoint not found or provider uses GET protocol
         if (!$response || (isset($response['http_code']) && $response['http_code'] >= 400)) {
             $queryUrl = '/?action=getNumber&service=' . urlencode($serviceCode) . '&country=' . urlencode($countryCode);
             $response = $this->makeRequest('GET', $queryUrl);
@@ -195,7 +291,7 @@ class CustomProviderAdapter implements ProviderInterface {
 
         return [
             'success' => false,
-            'error' => 'Provider gateway returned an unrecognized response or no numbers are available.'
+            'error' => 'Provider gateway returned an error or no numbers are currently available.'
         ];
     }
 
@@ -212,7 +308,6 @@ class CustomProviderAdapter implements ProviderInterface {
             ];
         }
 
-        // Query status from provider
         $response = $this->makeRequest('GET', '/status/' . urlencode($providerOrderId));
 
         if (!$response || (isset($response['http_code']) && $response['http_code'] >= 400)) {
@@ -243,7 +338,6 @@ class CustomProviderAdapter implements ProviderInterface {
             }
         }
 
-        // Text protocol (e.g. STATUS_OK:123456 or STATUS_WAIT_CODE or STATUS_CANCEL)
         if (isset($response['raw_text'])) {
             $raw = trim($response['raw_text']);
             if (str_starts_with($raw, 'STATUS_OK:')) {
@@ -293,36 +387,8 @@ class CustomProviderAdapter implements ProviderInterface {
      * Get real carrier balance via API
      */
     public function getBalance(): float {
-        if (!filter_var($this->apiUrl, FILTER_VALIDATE_URL)) {
-            return 0.00;
-        }
-
-        $response = $this->makeRequest('GET', '/balance');
-
-        if (!$response || (isset($response['http_code']) && $response['http_code'] >= 400)) {
-            $response = $this->makeRequest('GET', '/?action=getBalance');
-        }
-
-        if (is_array($response)) {
-            if (isset($response['balance'])) {
-                return (float)$response['balance'];
-            }
-            if (isset($response['data']['balance'])) {
-                return (float)$response['data']['balance'];
-            }
-        }
-
-        if (isset($response['raw_text'])) {
-            $raw = trim($response['raw_text']);
-            if (str_starts_with($raw, 'ACCESS_BALANCE:')) {
-                return (float)substr($raw, strlen('ACCESS_BALANCE:'));
-            }
-            if (is_numeric($raw)) {
-                return (float)$raw;
-            }
-        }
-
-        return 0.00;
+        $diag = $this->testConnection();
+        return (float)($diag['balance'] ?? 0.00);
     }
 
     /**
@@ -348,7 +414,7 @@ class CustomProviderAdapter implements ProviderInterface {
         curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, $this->timeout);
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 4);
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
@@ -366,8 +432,11 @@ class CustomProviderAdapter implements ProviderInterface {
         curl_close($ch);
 
         if ($err || $res === false) {
-            error_log("Provider cURL failure [{$url}]: {$err}");
-            return null;
+            return [
+                'http_code' => $httpCode ?: 0,
+                'curl_error' => $err ?: 'Unknown error',
+                'raw_text' => null
+            ];
         }
 
         $json = json_decode($res, true);

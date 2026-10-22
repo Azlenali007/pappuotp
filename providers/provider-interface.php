@@ -12,4 +12,5 @@ interface ProviderInterface {
     public function checkStatus(string $providerOrderId): array;
     public function cancelNumber(string $providerOrderId): bool;
     public function getBalance(): float;
+    public function testConnection(): array;
 }

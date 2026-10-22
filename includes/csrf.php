@@ -34,3 +34,12 @@ function require_csrf_token(): void {
         </div>");
     }
 }
+
+// CamelCase aliases
+function verifyCsrfToken(?string $token = null): bool {
+    return verify_csrf_token($token);
+}
+
+function generateCsrfToken(): string {
+    return csrf_token();
+}

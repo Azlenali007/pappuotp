@@ -19,38 +19,63 @@ class ServiceImporter {
         $provider = $stmt->fetch();
 
         if (!$provider) {
-            return ['success' => false, 'error' => 'Provider not found'];
+            return ['success' => false, 'error' => 'Selected provider was not found in database.', 'items' => []];
         }
 
-        $adapter = new CustomProviderAdapter($provider['api_url'], $provider['api_key']);
-        $services = $adapter->getServices();
+        try {
+            $adapter = new CustomProviderAdapter($provider['api_url'], $provider['api_key']);
+            $services = $adapter->getServices();
 
-        // Check which services already exist locally
-        $existingCodes = [];
-        $stmt = $db->query("SELECT code FROM services");
-        while ($row = $stmt->fetch()) {
-            $existingCodes[] = $row['code'];
-        }
+            if (empty($services)) {
+                return [
+                    'success' => false,
+                    'error' => "The provider API ('" . htmlspecialchars($provider['name']) . "') returned no services or could not be reached. Verify that the API URL and API Key are valid.",
+                    'provider' => $provider,
+                    'items' => []
+                ];
+            }
 
-        $previewItems = [];
-        foreach ($services as $srv) {
-            $isExisting = in_array($srv['code'], $existingCodes);
-            $previewItems[] = [
-                'code'          => $srv['code'],
-                'name'          => $srv['name'],
-                'category'      => $srv['category'] ?? 'general',
-                'provider_cost' => (float)($srv['cost'] ?? 0.50),
-                'suggested_price' => PricingManager::calculateSellingPrice((float)($srv['cost'] ?? 0.50)),
-                'is_existing'   => $isExisting,
-                'action_type'   => $isExisting ? 'update' : 'create'
+            // Check which services already exist locally
+            $existingCodes = [];
+            $stmt = $db->query("SELECT code FROM services");
+            while ($row = $stmt->fetch()) {
+                $existingCodes[] = $row['code'];
+            }
+
+            $previewItems = [];
+            foreach ($services as $srv) {
+                $code = trim($srv['code'] ?? '');
+                $name = trim($srv['name'] ?? $code);
+                if (empty($code)) continue;
+
+                $isExisting = in_array($code, $existingCodes);
+                $cost = (float)($srv['cost'] ?? 0.50);
+
+                $previewItems[] = [
+                    'code'          => $code,
+                    'name'          => $name,
+                    'category'      => $srv['category'] ?? 'general',
+                    'provider_cost' => $cost,
+                    'suggested_price' => PricingManager::calculateSellingPrice($cost),
+                    'is_existing'   => $isExisting,
+                    'action_type'   => $isExisting ? 'update' : 'create'
+                ];
+            }
+
+            return [
+                'success' => true,
+                'provider' => $provider,
+                'items' => $previewItems
+            ];
+        } catch (\Throwable $e) {
+            error_log("ServiceImporter preview exception: " . $e->getMessage());
+            return [
+                'success' => false,
+                'error' => 'Error querying provider services: ' . $e->getMessage(),
+                'provider' => $provider,
+                'items' => []
             ];
         }
-
-        return [
-            'success' => true,
-            'provider' => $provider,
-            'items' => $previewItems
-        ];
     }
 
     /**
@@ -78,7 +103,7 @@ class ServiceImporter {
                 }
 
                 try {
-                    // Check if exists
+                    // Check if exists in services
                     $stmt = $db->prepare("SELECT id, price FROM services WHERE code = ? LIMIT 1");
                     $stmt->execute([$item['code']]);
                     $existing = $stmt->fetch();
@@ -87,6 +112,7 @@ class ServiceImporter {
                         // Update provider cost only, preserve custom selling price!
                         $stmt = $db->prepare("UPDATE services SET provider_cost = ? WHERE id = ?");
                         $stmt->execute([$item['provider_cost'], $existing['id']]);
+                        $serviceId = (int)$existing['id'];
                         $updated++;
                         $logs[] = "Updated service: {$item['name']} (Code: {$item['code']})";
                     } else {
@@ -104,18 +130,23 @@ class ServiceImporter {
                             $status
                         ]);
                         $serviceId = (int)$db->lastInsertId();
-
-                        // Add provider mapping for India by default
-                        $stmt = $db->prepare("
-                            INSERT INTO provider_service_mappings (provider_id, service_id, provider_service_code, provider_country_code, provider_cost) 
-                            VALUES (?, ?, ?, 'IN', ?)
-                        ");
-                        $stmt->execute([$providerId, $serviceId, $item['code'], $item['provider_cost']]);
-
                         $imported++;
                         $logs[] = "Imported new service: {$item['name']} ({$status})";
                     }
-                } catch (Exception $e) {
+
+                    // Record mapping into provider_service_mappings
+                    $stmtMap = $db->prepare("
+                        INSERT INTO provider_service_mappings 
+                        (provider_id, service_id, provider_service_code, provider_country_code, provider_cost, is_available, last_checked) 
+                        VALUES (?, ?, ?, 'IN', ?, 1, NOW()) 
+                        ON DUPLICATE KEY UPDATE 
+                            provider_cost = VALUES(provider_cost), 
+                            is_available = 1, 
+                            last_checked = NOW()
+                    ");
+                    $stmtMap->execute([$providerId, $serviceId, $item['code'], $item['provider_cost']]);
+
+                } catch (\Throwable $e) {
                     $failed++;
                     $logs[] = "Failed item {$item['code']}: " . $e->getMessage();
                 }
@@ -147,8 +178,10 @@ class ServiceImporter {
                 'failed' => $failed,
                 'logs' => $logs
             ];
-        } catch (Exception $e) {
-            $db->rollBack();
+        } catch (\Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
             return ['success' => false, 'error' => $e->getMessage()];
         }
     }
