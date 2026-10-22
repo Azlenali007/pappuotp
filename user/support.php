@@ -3,8 +3,8 @@
  * User Support Desk & Tickets
  */
 
-require_once __DIR__ . '/includes/header.php';
-require_once __DIR__ . '/includes/sidebar.php';
+require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/../includes/validation.php';
 
 $db = get_db();
 $userId = (int)$currentUser['id'];
@@ -19,29 +19,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (empty($subject) || empty($message)) {
         set_flash('error', 'Subject and message are required to open a support ticket.');
-    } else {
-        $ticketRef = 'TCK-' . date('Y') . '-' . strtoupper(bin2hex(random_bytes(3)));
-        $db->beginTransaction();
-        try {
-            $stmt = $db->prepare("INSERT INTO support_tickets (ticket_ref, user_id, subject, department, priority, status) VALUES (?, ?, ?, ?, ?, 'open')");
-            $stmt->execute([$ticketRef, $userId, $subject, $department, $priority]);
-            $ticketId = (int)$db->lastInsertId();
-
-            $stmt = $db->prepare("INSERT INTO support_ticket_replies (ticket_id, sender_type, sender_id, message) VALUES (?, 'user', ?, ?)");
-            $stmt->execute([$ticketId, $userId, $message]);
-
-            $db->commit();
-            set_flash('success', "Support ticket #{$ticketRef} opened successfully.");
-            header("Location: /user/ticket-details.php?id=" . $ticketId);
-            exit;
-        } catch (Exception $e) {
-            $db->rollBack();
-            set_flash('error', 'Failed to create support ticket. Please try again.');
-        }
+        header("Location: /user/support.php");
+        exit;
     }
-    header("Location: /user/support.php");
-    exit;
+
+    $ticketRef = 'TCK-' . date('Y') . '-' . strtoupper(bin2hex(random_bytes(3)));
+    $db->beginTransaction();
+    try {
+        $stmt = $db->prepare("INSERT INTO support_tickets (ticket_ref, user_id, subject, department, priority, status) VALUES (?, ?, ?, ?, ?, 'open')");
+        $stmt->execute([$ticketRef, $userId, $subject, $department, $priority]);
+        $ticketId = (int)$db->lastInsertId();
+
+        $stmt = $db->prepare("INSERT INTO support_ticket_replies (ticket_id, sender_type, sender_id, message) VALUES (?, 'user', ?, ?)");
+        $stmt->execute([$ticketId, $userId, $message]);
+
+        // Insert notification for admin awareness
+        $stmt = $db->prepare("INSERT INTO notifications (user_id, title, message, type, link) VALUES (NULL, 'New Support Ticket', ?, 'info', ?)");
+        $stmt->execute(["New ticket #{$ticketRef} opened by user {$currentUser['name']}: {$subject}", "/admin/ticket-details.php?id={$ticketId}"]);
+
+        $db->commit();
+        set_flash('success', "Support ticket #{$ticketRef} opened successfully.");
+        header("Location: /user/ticket-details.php?id=" . $ticketId);
+        exit;
+    } catch (\Throwable $e) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        error_log("Support ticket creation error: " . $e->getMessage());
+        set_flash('error', 'Failed to create support ticket. Please try again.');
+        header("Location: /user/support.php");
+        exit;
+    }
 }
+
+$pageTitle = 'Support Desk - OTP Services';
+require_once __DIR__ . '/includes/header.php';
+require_once __DIR__ . '/includes/sidebar.php';
 
 $stmt = $db->prepare("SELECT * FROM support_tickets WHERE user_id = ? ORDER BY id DESC");
 $stmt->execute([$userId]);

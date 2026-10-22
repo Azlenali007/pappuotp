@@ -43,10 +43,13 @@ if (in_array($order['status'], ['pending', 'waiting'])) {
     }
 }
 
+$code = $order['otp_code'] ?? $order['sms_code'] ?? null;
+
 echo json_encode([
     'success' => true,
     'status' => $order['status'],
-    'sms_code' => $order['sms_code'] ?? null,
+    'otp_code' => $code,
+    'sms_code' => $code,
     'full_sms' => $order['full_sms'] ?? null,
     'is_completed' => ($order['status'] === 'completed'),
     'is_cancelled' => ($order['status'] === 'cancelled'),

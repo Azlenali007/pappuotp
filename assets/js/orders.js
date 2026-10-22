@@ -8,19 +8,20 @@ function initOrderPoller(orderId, pollInterval = 3000) {
             .then(res => res.json())
             .then(data => {
                 if (!data.success) return;
-                const order = data.order;
+                const order = data.order || data;
+                const otp = order.otp_code || order.sms_code || data.otp_code || data.sms_code;
                 
                 // If code received
-                if (order.sms_code) {
+                if (otp) {
                     clearInterval(poller);
                     const codeEl = document.getElementById('sms-code-display');
                     if (codeEl) {
-                        codeEl.innerText = order.sms_code;
+                        codeEl.innerText = otp;
                         codeEl.classList.remove('animate-pulse');
                     }
                     const fullSmsEl = document.getElementById('full-sms-display');
-                    if (fullSmsEl && order.full_sms) {
-                        fullSmsEl.innerText = order.full_sms;
+                    if (fullSmsEl && (order.full_sms || data.full_sms)) {
+                        fullSmsEl.innerText = order.full_sms || data.full_sms;
                     }
                     const statusBadge = document.getElementById('order-status-badge');
                     if (statusBadge) {
@@ -31,7 +32,7 @@ function initOrderPoller(orderId, pollInterval = 3000) {
                         Swal.fire({
                             icon: 'success',
                             title: 'OTP Received!',
-                            text: `Your verification code is: ${order.sms_code}`,
+                            text: `Your verification code is: ${otp}`,
                             confirmButtonColor: '#7c3aed',
                             confirmButtonText: 'Great!'
                         });

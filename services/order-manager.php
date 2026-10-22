@@ -5,10 +5,61 @@
  */
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/wallet-manager.php';
 require_once __DIR__ . '/../providers/custom-provider.php';
 
 class OrderManager {
+    /**
+     * Get order details by ID with normalized schema field aliases
+     */
+    public function getOrderById(int $orderId, ?int $userId = null): ?array {
+        return self::fetchOrderById($orderId, $userId);
+    }
+
+    public static function fetchOrderById(int $orderId, ?int $userId = null): ?array {
+        $db = get_db();
+        $sql = "
+            SELECT 
+                o.*,
+                o.cost as price,
+                o.otp_code as sms_code,
+                s.name as service_name,
+                s.code as service_code,
+                s.icon as service_icon,
+                p.name as provider_name,
+                p.api_url as provider_api_url,
+                p.api_key as provider_api_key
+            FROM orders o 
+            LEFT JOIN services s ON s.id = o.service_id 
+            LEFT JOIN providers p ON p.id = o.provider_id 
+            WHERE o.id = ?
+        ";
+        $params = [$orderId];
+
+        if ($userId !== null && $userId > 0) {
+            $sql .= " AND o.user_id = ?";
+            $params[] = $userId;
+        }
+
+        $sql .= " LIMIT 1";
+
+        $stmt = $db->prepare($sql);
+        $stmt->execute($params);
+        $order = $stmt->fetch();
+
+        if (!$order) {
+            return null;
+        }
+
+        // Ensure both naming conventions are populated
+        $order['price'] = (float)($order['cost'] ?? 0);
+        $order['cost'] = (float)($order['cost'] ?? 0);
+        $order['sms_code'] = $order['otp_code'] ?? null;
+
+        return $order;
+    }
+
     /**
      * Create Order and Allocate Phone Number
      */
@@ -53,7 +104,8 @@ class OrderManager {
         if (empty($alloc['success'])) {
             // Refund immediately if provider fails
             WalletManager::addFunds($userId, $totalCost, "Instant refund: Provider out of numbers for {$service['name']}", $orderRef, 'refund');
-            return ['success' => false, 'error' => 'The provider currently has no available numbers for this service. Your funds were refunded.'];
+            $errMsg = $alloc['error'] ?? 'The provider currently has no available numbers for this service. Your funds were refunded.';
+            return ['success' => false, 'error' => $errMsg];
         }
 
         $phoneNumber = $alloc['phone_number'];
@@ -102,19 +154,54 @@ class OrderManager {
     }
 
     /**
-     * User authorized cancellation with 100% refund
+     * User/System authorized cancellation with 100% refund
+     * Supports both instance and static calls, and returns standardized result array
      */
-    public static function cancelOrder(int $orderId, int $userId): bool {
+    public function cancelOrder(int $orderId, int $userId, string $reason = 'User requested cancellation'): array {
+        return self::executeCancelOrder($orderId, $userId, $reason);
+    }
+
+    public static function executeCancelOrder(int $orderId, int $userId, string $reason = 'User requested cancellation'): array {
         $db = get_db();
-        $stmt = $db->prepare("SELECT * FROM orders WHERE id = ? AND user_id = ? AND status = 'pending' LIMIT 1");
+        $stmt = $db->prepare("SELECT * FROM orders WHERE id = ? AND user_id = ? AND status IN ('pending', 'waiting') LIMIT 1");
         $stmt->execute([$orderId, $userId]);
         $order = $stmt->fetch();
 
         if (!$order) {
-            return false;
+            return [
+                'success' => false,
+                'error' => 'Order not eligible for cancellation or already completed/cancelled.'
+            ];
         }
 
-        return WalletManager::refundOrder($orderId, 'User requested cancellation');
+        // Cancel with provider if order has provider_order_id
+        if (!empty($order['provider_order_id']) && !empty($order['provider_id'])) {
+            $stmtP = $db->prepare("SELECT api_url, api_key FROM providers WHERE id = ? LIMIT 1");
+            $stmtP->execute([$order['provider_id']]);
+            $provider = $stmtP->fetch();
+            if ($provider) {
+                try {
+                    $adapter = new CustomProviderAdapter($provider['api_url'], $provider['api_key']);
+                    $adapter->cancelNumber($order['provider_order_id']);
+                } catch (\Throwable $e) {
+                    error_log("Provider cancel call error: " . $e->getMessage());
+                }
+            }
+        }
+
+        $refunded = WalletManager::refundOrder($orderId, $reason);
+
+        if ($refunded) {
+            return [
+                'success' => true,
+                'message' => 'Order cancelled and funds refunded successfully.'
+            ];
+        }
+
+        return [
+            'success' => false,
+            'error' => 'Failed to process refund for this order.'
+        ];
     }
 
     /**
@@ -122,7 +209,7 @@ class OrderManager {
      */
     public static function fulfillOtp(int $orderId, string $otpCode, ?string $fullSms = null): bool {
         $db = get_db();
-        $stmt = $db->prepare("SELECT * FROM orders WHERE id = ? AND status = 'pending' LIMIT 1");
+        $stmt = $db->prepare("SELECT * FROM orders WHERE id = ? AND status IN ('pending', 'waiting') LIMIT 1");
         $stmt->execute([$orderId]);
         $order = $stmt->fetch();
 

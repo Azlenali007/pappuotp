@@ -23,7 +23,7 @@ echo "[" . date('Y-m-d H:i:s') . "] Expiring stale orders...\n";
 
 $db = getDB();
 $stmt = $db->query("
-    SELECT id, user_id, order_ref, price
+    SELECT id, user_id, order_ref, cost as price
     FROM orders
     WHERE status IN ('pending', 'waiting')
       AND expires_at < NOW()
@@ -37,7 +37,7 @@ $expiredCount = 0;
 
 foreach ($expiredOrders as $eo) {
     $res = $orderManager->cancelOrder($eo['id'], $eo['user_id'], 'Order expired after 20 minutes without SMS arrival');
-    if ($res['success']) {
+    if (!empty($res['success'])) {
         $expiredCount++;
         echo "[" . date('Y-m-d H:i:s') . "] Expired and refunded order #{$eo['id']} ({$eo['order_ref']})\n";
     }

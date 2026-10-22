@@ -3,8 +3,8 @@
  * Admin Providers Management
  */
 
-require_once __DIR__ . '/includes/header.php';
-require_once __DIR__ . '/includes/sidebar.php';
+require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/admin-functions.php';
 
 $db = get_db();
 
@@ -19,6 +19,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['provider_id'], $_POST
     header("Location: /admin/providers.php");
     exit;
 }
+
+$pageTitle = 'OTP Providers - Super Admin';
+require_once __DIR__ . '/includes/header.php';
+require_once __DIR__ . '/includes/sidebar.php';
 
 $providers = $db->query("SELECT * FROM providers ORDER BY id ASC")->fetchAll();
 $flash = get_flash();

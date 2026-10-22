@@ -21,17 +21,27 @@ if (!flock($fp, LOCK_EX | LOCK_NB)) {
 echo "[" . date('Y-m-d H:i:s') . "] Reconciling pending payments...\n";
 
 $db = getDB();
-// Expire pending payments older than 24 hours
+// Expire pending payments older than 24 hours (using 'failed' status supported by payments enum)
 $stmt = $db->prepare("
     UPDATE payments
-    SET status = 'expired'
+    SET status = 'failed'
     WHERE status = 'pending'
       AND created_at < DATE_SUB(NOW(), INTERVAL 24 HOUR)
 ");
 $stmt->execute();
 $count = $stmt->rowCount();
 
-echo "[" . date('Y-m-d H:i:s') . "] Expired {$count} stale pending payment sessions.\n";
+// Also expire matching pending deposits
+$stmtDep = $db->prepare("
+    UPDATE deposits
+    SET status = 'failed'
+    WHERE status = 'pending'
+      AND created_at < DATE_SUB(NOW(), INTERVAL 24 HOUR)
+");
+$stmtDep->execute();
+$depCount = $stmtDep->rowCount();
+
+echo "[" . date('Y-m-d H:i:s') . "] Marked {$count} stale payments and {$depCount} deposits as failed.\n";
 
 flock($fp, LOCK_UN);
 fclose($fp);

@@ -11,10 +11,8 @@ require_once __DIR__ . '/../services/wallet-manager.php';
 $rawBody = file_get_contents('php://input');
 $signature = $_SERVER['HTTP_X_RAZORPAY_SIGNATURE'] ?? '';
 
-$db = getDB();
-$stmt = $db->prepare("SELECT setting_value FROM settings WHERE setting_key = 'razorpay_webhook_secret'");
-$stmt->execute();
-$secret = $stmt->fetchColumn() ?: '';
+$db = get_db();
+$secret = get_setting('razorpay_webhook_secret', '');
 
 // Verify webhook signature if secret configured
 if (!empty($secret) && !empty($signature)) {
@@ -33,18 +31,21 @@ if (!$event || !isset($event['event'])) {
     exit;
 }
 
+$eventId = $event['id'] ?? ('wh_' . bin2hex(random_bytes(8)));
+
 // Log webhook payload
 try {
     $stmt = $db->prepare("
-        INSERT INTO webhook_events (gateway, event_type, payload, status, created_at)
-        VALUES ('razorpay', :event, :payload, 'processed', NOW())
+        INSERT INTO webhook_events (event_id, gateway, event_type, payload, status, created_at)
+        VALUES (?, 'razorpay', ?, ?, 'processed', NOW())
     ");
     $stmt->execute([
-        ':event' => $event['event'],
-        ':payload' => $rawBody
+        $eventId,
+        $event['event'],
+        $rawBody
     ]);
 } catch (\Throwable $e) {
-    // Ignore logging error
+    // Already logged or ignore duplicate event log
 }
 
 if ($event['event'] === 'payment.captured') {

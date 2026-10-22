@@ -4,8 +4,7 @@
  * Handles order creation POST and displays orders list
  */
 
-require_once __DIR__ . '/includes/header.php';
-require_once __DIR__ . '/includes/sidebar.php';
+require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/../services/order-manager.php';
 require_once __DIR__ . '/../includes/pagination.php';
 
@@ -31,6 +30,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
         exit;
     }
 }
+
+$pageTitle = 'Orders - OTP Services';
+require_once __DIR__ . '/includes/header.php';
+require_once __DIR__ . '/includes/sidebar.php';
 
 // Filtering
 $statusFilter = trim($_GET['status'] ?? '');

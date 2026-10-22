@@ -39,7 +39,7 @@ if (!$order) {
 $action = $_POST['action'] ?? $_GET['action'] ?? '';
 if ($action === 'cancel' && in_array($order['status'], ['pending', 'waiting'])) {
     $cancelResult = $orderManager->cancelOrder($orderId, $userId, 'Cancelled by user via API');
-    if ($cancelResult['success']) {
+    if (!empty($cancelResult['success'])) {
         $order = $orderManager->getOrderById($orderId, $userId);
         echo json_encode([
             'success' => true,
@@ -58,7 +58,7 @@ if ($action === 'cancel' && in_array($order['status'], ['pending', 'waiting'])) 
 if (in_array($order['status'], ['pending', 'waiting'])) {
     $otpManager = new OtpManager();
     $otpCheck = $otpManager->checkAndProcessOtp($orderId);
-    if ($otpCheck['received'] ?? false) {
+    if (!empty($otpCheck['received'])) {
         $order = $orderManager->getOrderById($orderId, $userId);
     }
 }
@@ -66,19 +66,27 @@ if (in_array($order['status'], ['pending', 'waiting'])) {
 // Calculate remaining countdown
 $expiresAt = strtotime($order['expires_at'] ?? 'now');
 $secondsRemaining = max(0, $expiresAt - time());
+$code = $order['otp_code'] ?? $order['sms_code'] ?? null;
+$cost = (float)($order['cost'] ?? $order['price'] ?? 0);
 
 echo json_encode([
     'success' => true,
+    'status' => $order['status'],
+    'otp_code' => $code,
+    'sms_code' => $code,
+    'full_sms' => $order['full_sms'] ?? null,
     'order' => [
         'id' => (int)$order['id'],
         'order_ref' => $order['order_ref'],
         'status' => $order['status'],
         'phone_number' => $order['phone_number'],
         'service_name' => $order['service_name'] ?? 'Service',
-        'sms_code' => $order['sms_code'],
-        'full_sms' => $order['full_sms'],
+        'otp_code' => $code,
+        'sms_code' => $code,
+        'full_sms' => $order['full_sms'] ?? null,
         'expires_at' => $order['expires_at'],
         'seconds_remaining' => $secondsRemaining,
-        'price' => (float)$order['price'],
+        'cost' => $cost,
+        'price' => $cost,
     ]
 ]);

@@ -76,3 +76,39 @@ function require_admin_login(): void {
         exit;
     }
 }
+
+/**
+ * Standard Aliases for camelCase Callers (API, Services & Payments)
+ */
+function initSession(): void {
+    if (session_status() === PHP_SESSION_NONE) {
+        @ini_set('session.cookie_httponly', '1');
+        @ini_set('session.use_only_cookies', '1');
+        @ini_set('session.cookie_samesite', 'Lax');
+        session_start();
+    }
+}
+
+function isUserLoggedIn(): bool {
+    return is_user_logged_in();
+}
+
+function getCurrentUserId(): ?int {
+    return current_user_id();
+}
+
+function requireUserLogin(): void {
+    require_user_login();
+}
+
+function isAdminLoggedIn(): bool {
+    return is_admin_logged_in();
+}
+
+function getCurrentAdminId(): ?int {
+    return current_admin_id();
+}
+
+function requireAdminLogin(): void {
+    require_admin_login();
+}

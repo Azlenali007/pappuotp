@@ -3,12 +3,21 @@
  * User Ticket Conversation Details
  */
 
-require_once __DIR__ . '/includes/header.php';
-require_once __DIR__ . '/includes/sidebar.php';
+require_once __DIR__ . '/includes/auth.php';
 
 $db = get_db();
 $ticketId = (int)($_GET['id'] ?? 0);
 $userId = (int)$currentUser['id'];
+
+// Fetch ticket
+$stmt = $db->prepare("SELECT * FROM support_tickets WHERE id = ? AND user_id = ? LIMIT 1");
+$stmt->execute([$ticketId, $userId]);
+$ticket = $stmt->fetch();
+
+if (!$ticket) {
+    header("Location: /user/support.php");
+    exit;
+}
 
 // Handle reply POST
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -29,20 +38,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
-// Fetch ticket
-$stmt = $db->prepare("SELECT * FROM support_tickets WHERE id = ? AND user_id = ? LIMIT 1");
-$stmt->execute([$ticketId, $userId]);
-$ticket = $stmt->fetch();
-
-if (!$ticket) {
-    header("Location: /user/support.php");
-    exit;
-}
-
 // Fetch replies
 $stmt = $db->prepare("SELECT * FROM support_ticket_replies WHERE ticket_id = ? ORDER BY id ASC");
 $stmt->execute([$ticketId]);
 $replies = $stmt->fetchAll();
+
+$pageTitle = 'Ticket #' . ($ticket['ticket_ref'] ?? $ticketId) . ' - Support';
+require_once __DIR__ . '/includes/header.php';
+require_once __DIR__ . '/includes/sidebar.php';
 
 $flash = get_flash();
 ?>
@@ -60,48 +63,73 @@ $flash = get_flash();
             <?php endif; ?>
 
             <div class="flex items-center gap-2 text-xs font-semibold text-slate-500">
-                <a href="/user/support.php" class="hover:text-purple-600">Support</a>
+                <a href="/user/support.php" class="hover:text-purple-600">Support Tickets</a>
                 <span>/</span>
                 <span class="text-slate-900"><?= e($ticket['ticket_ref']) ?></span>
             </div>
 
-            <div class="bg-white rounded-2xl border border-slate-100 shadow-xs p-6 space-y-4">
-                <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-100 gap-2">
+            <!-- Ticket Overview Card -->
+            <div class="bg-white rounded-2xl border border-slate-100 shadow-xs p-6 sm:p-8 space-y-6">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-100 gap-4">
                     <div>
+                        <div class="flex items-center gap-2 text-xs text-slate-400 font-mono mb-1">
+                            <span><?= e($ticket['ticket_ref']) ?></span>
+                            <span>•</span>
+                            <span><?= date('M j, Y H:i', strtotime($ticket['created_at'])) ?></span>
+                        </div>
                         <h1 class="text-xl font-extrabold text-slate-900"><?= e($ticket['subject']) ?></h1>
-                        <div class="text-xs text-slate-400 mt-1">Ticket #<span class="font-mono text-slate-700 font-semibold"><?= e($ticket['ticket_ref']) ?></span> • <?= e($ticket['department']) ?></div>
                     </div>
                     <div>
                         <?= render_status_badge($ticket['status']) ?>
                     </div>
                 </div>
 
-                <!-- Messages Thread -->
+                <!-- Initial Ticket Message -->
+                <div class="p-4 rounded-xl bg-purple-50/50 border border-purple-100/60 text-sm text-slate-700 leading-relaxed">
+                    <div class="text-xs font-bold text-purple-700 mb-1">Original Inquiry</div>
+                    <?= nl2br(e($ticket['message'])) ?>
+                </div>
+
+                <!-- Conversation History -->
                 <div class="space-y-4 pt-2">
-                    <?php foreach ($replies as $reply): ?>
-                        <div class="p-5 rounded-2xl border <?= $reply['sender_type'] === 'admin' ? 'bg-purple-50/60 border-purple-100' : 'bg-white border-slate-200' ?>">
-                            <div class="flex items-center justify-between mb-2">
-                                <span class="text-xs font-bold <?= $reply['sender_type'] === 'admin' ? 'text-purple-700' : 'text-slate-800' ?>">
-                                    <?= $reply['sender_type'] === 'admin' ? 'Support Agent (Admin)' : e($currentUser['name']) ?>
-                                </span>
-                                <span class="text-xs text-slate-400"><?= date('d M Y, H:i', strtotime($reply['created_at'])) ?></span>
-                            </div>
-                            <div class="text-sm text-slate-700 leading-relaxed whitespace-pre-line"><?= e($reply['message']) ?></div>
+                    <h2 class="text-xs font-bold text-slate-700 uppercase tracking-wider">Conversation History</h2>
+
+                    <?php if (empty($replies)): ?>
+                        <div class="p-4 rounded-xl bg-slate-50 border border-slate-100 text-xs text-slate-500 text-center">
+                            Awaiting agent response. Our support team typically answers within a few minutes.
                         </div>
-                    <?php endforeach; ?>
+                    <?php else: ?>
+                        <?php foreach ($replies as $rep): ?>
+                            <div class="p-4 rounded-xl <?= $rep['sender_type'] === 'admin' ? 'bg-purple-50 border border-purple-100 ml-4 sm:ml-8' : 'bg-slate-50 border border-slate-100 mr-4 sm:mr-8' ?> text-sm space-y-1">
+                                <div class="flex items-center justify-between text-xs">
+                                    <span class="font-bold <?= $rep['sender_type'] === 'admin' ? 'text-purple-700' : 'text-slate-900' ?>">
+                                        <?= $rep['sender_type'] === 'admin' ? 'Super Admin Support' : 'You' ?>
+                                    </span>
+                                    <span class="text-slate-400"><?= time_ago($rep['created_at']) ?></span>
+                                </div>
+                                <div class="text-slate-700 leading-relaxed whitespace-pre-line"><?= e($rep['message']) ?></div>
+                            </div>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
                 </div>
 
                 <!-- Reply Form -->
-                <form action="/user/ticket-details.php?id=<?= $ticket['id'] ?>" method="POST" class="pt-6 border-t border-slate-100 space-y-4">
-                    <?= csrf_field() ?>
-                    <div>
-                        <label for="message" class="block text-xs font-semibold text-slate-700 mb-1.5 uppercase tracking-wider">Post Reply</label>
-                        <textarea id="message" name="message" rows="3" required placeholder="Type your response..." class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-600/20 focus:border-purple-600 focus:bg-white"></textarea>
+                <?php if ($ticket['status'] !== 'closed'): ?>
+                    <form action="/user/ticket-details.php?id=<?= $ticket['id'] ?>" method="POST" class="pt-4 border-t border-slate-100 space-y-3">
+                        <?= csrf_field() ?>
+                        <label for="message" class="block text-xs font-bold text-slate-700 uppercase">Add Reply</label>
+                        <textarea id="message" name="message" rows="3" required placeholder="Type your response or question here..." class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-600/20 focus:border-purple-600 focus:bg-white transition-all"></textarea>
+                        <div class="flex justify-end">
+                            <button type="submit" class="px-6 py-2.5 rounded-xl bg-purple-600 text-white font-bold text-xs hover:bg-purple-700 shadow-md transition-all cursor-pointer">
+                                Send Reply
+                            </button>
+                        </div>
+                    </form>
+                <?php else: ?>
+                    <div class="p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs text-slate-500 text-center">
+                        This support ticket is marked as resolved and closed.
                     </div>
-                    <div class="flex justify-end">
-                        <button type="submit" class="px-6 py-2.5 rounded-xl bg-purple-600 text-white font-bold text-xs hover:bg-purple-700 shadow-md shadow-purple-200">Send Reply</button>
-                    </div>
-                </form>
+                <?php endif; ?>
             </div>
 
         </div>

@@ -8,6 +8,24 @@ require_once __DIR__ . '/../config/database.php';
 
 class WalletManager {
     /**
+     * Get user balance (instance method)
+     */
+    public function getBalance(int $userId): float {
+        return self::getUserBalance($userId);
+    }
+
+    /**
+     * Get user balance (static method)
+     */
+    public static function getUserBalance(int $userId): float {
+        $db = get_db();
+        $stmt = $db->prepare("SELECT balance FROM wallets WHERE user_id = ? LIMIT 1");
+        $stmt->execute([$userId]);
+        $val = $stmt->fetchColumn();
+        return $val !== false ? (float)$val : 0.00;
+    }
+
+    /**
      * Atomically deduct funds for order creation
      */
     public static function deductFunds(int $userId, float $amount, string $description, ?string $referenceId = null): bool {
@@ -50,7 +68,7 @@ class WalletManager {
 
             $db->commit();
             return true;
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             if ($db->inTransaction()) {
                 $db->rollBack();
             }
@@ -60,7 +78,7 @@ class WalletManager {
     }
 
     /**
-     * Atomically credit funds (deposits, manual adjustments)
+     * Atomically credit funds (deposits, manual adjustments, refunds)
      */
     public static function addFunds(int $userId, float $amount, string $description, ?string $referenceId = null, string $type = 'deposit'): bool {
         if ($amount <= 0) return false;
@@ -99,7 +117,7 @@ class WalletManager {
 
             $db->commit();
             return true;
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             if ($db->inTransaction()) {
                 $db->rollBack();
             }
@@ -145,7 +163,7 @@ class WalletManager {
             $stmt = $db->prepare("SELECT balance FROM wallets WHERE user_id = ? FOR UPDATE");
             $stmt->execute([$userId]);
             $wallet = $stmt->fetch();
-            $currentBalance = (float)$wallet['balance'];
+            $currentBalance = $wallet ? (float)$wallet['balance'] : 0.00;
             $newBalance = round($currentBalance + $amount, 2);
 
             // Update wallet
@@ -180,7 +198,7 @@ class WalletManager {
 
             $db->commit();
             return true;
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             if ($db->inTransaction()) {
                 $db->rollBack();
             }

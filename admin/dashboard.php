@@ -1,27 +1,36 @@
 <?php
 /**
  * Super Admin Dashboard
- * Matches Reference Image "Admin Dashboard"
+ * Displays authentic operational metrics, live carrier orders, and verified revenue charts
  */
 
-require_once __DIR__ . '/includes/header.php';
-require_once __DIR__ . '/includes/sidebar.php';
+require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/admin-functions.php';
 
 $db = get_db();
 
-// Metrics
+// Authentic Metrics
 $totalUsers = (int)$db->query("SELECT COUNT(*) FROM users")->fetchColumn();
 $totalOrders = (int)$db->query("SELECT COUNT(*) FROM orders")->fetchColumn();
 $totalRevenue = (float)$db->query("SELECT COALESCE(SUM(amount), 0) FROM wallet_transactions WHERE type = 'deposit'")->fetchColumn();
 $pendingOrders = (int)$db->query("SELECT COUNT(*) FROM orders WHERE status = 'pending'")->fetchColumn();
 
-// If fresh database, show representative metrics if lower
-$displayUsers = max(248, $totalUsers);
-$displayOrders = max(1524, $totalOrders);
-$displayRevenue = max(45230.00, $totalRevenue);
-$displayPending = max(67, $pendingOrders);
+// Compute real 7-day revenue trend from transactions ledger
+$chartLabels = [];
+$chartData = [];
+for ($i = 6; $i >= 0; $i--) {
+    $dateStr = date('Y-m-d', strtotime("-{$i} days"));
+    $chartLabels[] = date('M j', strtotime($dateStr));
+    $stmtDay = $db->prepare("
+        SELECT COALESCE(SUM(amount), 0) 
+        FROM wallet_transactions 
+        WHERE type = 'deposit' AND DATE(created_at) = ?
+    ");
+    $stmtDay->execute([$dateStr]);
+    $chartData[] = (float)$stmtDay->fetchColumn();
+}
 
-// Fetch Recent Orders with user & service info (matching screenshot)
+// Fetch Recent Orders with user & service info
 $stmt = $db->query("
     SELECT o.*, u.name as user_name, s.name as service_name, s.icon as service_icon 
     FROM orders o 
@@ -31,6 +40,10 @@ $stmt = $db->query("
     LIMIT 6
 ");
 $recentOrders = $stmt->fetchAll();
+
+$pageTitle = 'Dashboard - Super Admin';
+require_once __DIR__ . '/includes/header.php';
+require_once __DIR__ . '/includes/sidebar.php';
 ?>
 
 <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -42,10 +55,10 @@ $recentOrders = $stmt->fetchAll();
             <!-- Title Header -->
             <div class="space-y-1">
                 <h1 class="text-2xl font-extrabold text-slate-900 tracking-tight">Admin Dashboard</h1>
-                <p class="text-sm text-slate-500">Overview of your verification platform, providers, and revenue</p>
+                <p class="text-sm text-slate-500">Live overview of your verification platform, carrier gateways, and verified revenue</p>
             </div>
 
-            <!-- 4 Stat Cards (matching screenshot) -->
+            <!-- 4 Stat Cards -->
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
                 <!-- 1. Total Users -->
                 <div class="bg-white rounded-2xl p-6 border border-slate-100 shadow-xs flex flex-col justify-between">
@@ -57,12 +70,11 @@ $recentOrders = $stmt->fetchAll();
                             <span>Total Users</span>
                         </div>
                         <div class="text-2xl sm:text-3xl font-extrabold text-slate-900">
-                            <?= number_format($displayUsers) ?>
+                            <?= number_format($totalUsers) ?>
                         </div>
                     </div>
-                    <div class="mt-4 pt-3 border-t border-slate-50 flex items-center gap-1 text-xs font-semibold text-emerald-600">
-                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
-                        <span>+12%</span>
+                    <div class="mt-4 pt-3 border-t border-slate-50 flex items-center gap-1 text-xs font-semibold text-slate-400">
+                        <span>Registered accounts</span>
                     </div>
                 </div>
 
@@ -76,12 +88,11 @@ $recentOrders = $stmt->fetchAll();
                             <span>Total Orders</span>
                         </div>
                         <div class="text-2xl sm:text-3xl font-extrabold text-slate-900">
-                            <?= number_format($displayOrders) ?>
+                            <?= number_format($totalOrders) ?>
                         </div>
                     </div>
-                    <div class="mt-4 pt-3 border-t border-slate-50 flex items-center gap-1 text-xs font-semibold text-emerald-600">
-                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
-                        <span>+8%</span>
+                    <div class="mt-4 pt-3 border-t border-slate-50 flex items-center gap-1 text-xs font-semibold text-slate-400">
+                        <span>Lifetime allocations</span>
                     </div>
                 </div>
 
@@ -92,15 +103,14 @@ $recentOrders = $stmt->fetchAll();
                             <div class="w-6 h-6 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
                                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                             </div>
-                            <span>Total Revenue</span>
+                            <span>Total Deposits</span>
                         </div>
                         <div class="text-2xl sm:text-3xl font-extrabold text-slate-900">
-                            <?= format_currency($displayRevenue) ?>
+                            <?= format_currency($totalRevenue) ?>
                         </div>
                     </div>
-                    <div class="mt-4 pt-3 border-t border-slate-50 flex items-center gap-1 text-xs font-semibold text-emerald-600">
-                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
-                        <span>+16%</span>
+                    <div class="mt-4 pt-3 border-t border-slate-50 flex items-center gap-1 text-xs font-semibold text-slate-400">
+                        <span>Verified credited funds</span>
                     </div>
                 </div>
 
@@ -114,24 +124,23 @@ $recentOrders = $stmt->fetchAll();
                             <span>Pending Orders</span>
                         </div>
                         <div class="text-2xl sm:text-3xl font-extrabold text-slate-900">
-                            <?= number_format($displayPending) ?>
+                            <?= number_format($pendingOrders) ?>
                         </div>
                     </div>
-                    <div class="mt-4 pt-3 border-t border-slate-50 flex items-center gap-1 text-xs font-semibold text-rose-600">
-                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>
-                        <span>-5%</span>
+                    <div class="mt-4 pt-3 border-t border-slate-50 flex items-center gap-1 text-xs font-semibold text-amber-600">
+                        <span>Awaiting verification SMS</span>
                     </div>
                 </div>
             </div>
 
-            <!-- Chart & Recent Orders Layout (matching screenshot) -->
+            <!-- Chart & Recent Orders Layout -->
             <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
                 
-                <!-- Left: Revenue Overview Smooth Chart (matching screenshot) -->
+                <!-- Left: Revenue Overview Smooth Chart -->
                 <div class="lg:col-span-7 bg-white rounded-2xl border border-slate-100 shadow-xs p-6 space-y-4">
                     <div class="flex items-center justify-between">
-                        <h2 class="text-base font-bold text-slate-900">Revenue Overview</h2>
-                        <span class="text-xs text-slate-400 font-semibold">Apr 6 – Apr 12</span>
+                        <h2 class="text-base font-bold text-slate-900">Revenue Overview (7 Days)</h2>
+                        <span class="text-xs text-slate-400 font-semibold"><?= reset($chartLabels) ?> – <?= end($chartLabels) ?></span>
                     </div>
 
                     <div class="h-64 relative">
@@ -139,7 +148,7 @@ $recentOrders = $stmt->fetchAll();
                     </div>
                 </div>
 
-                <!-- Right: Recent Orders Table (matching screenshot) -->
+                <!-- Right: Recent Orders Table -->
                 <div class="lg:col-span-5 bg-white rounded-2xl border border-slate-100 shadow-xs p-6 space-y-4">
                     <div class="flex items-center justify-between">
                         <h2 class="text-base font-bold text-slate-900 flex items-center gap-1.5">
@@ -160,14 +169,20 @@ $recentOrders = $stmt->fetchAll();
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-slate-50">
-                                <?php foreach ($recentOrders as $ro): ?>
-                                    <tr class="hover:bg-slate-50/60 transition-colors">
-                                        <td class="py-3 font-semibold text-slate-900"><?= e($ro['user_name']) ?></td>
-                                        <td class="py-3 text-slate-600"><?= e($ro['service_name']) ?></td>
-                                        <td class="py-3"><?= render_status_badge($ro['status']) ?></td>
-                                        <td class="py-3 font-bold text-slate-900 text-right"><?= format_currency($ro['cost']) ?></td>
+                                <?php if (empty($recentOrders)): ?>
+                                    <tr>
+                                        <td colspan="4" class="py-6 text-center text-slate-400">No orders placed yet</td>
                                     </tr>
-                                <?php endforeach; ?>
+                                <?php else: ?>
+                                    <?php foreach ($recentOrders as $ro): ?>
+                                        <tr class="hover:bg-slate-50/60 transition-colors">
+                                            <td class="py-3 font-semibold text-slate-900"><?= e($ro['user_name']) ?></td>
+                                            <td class="py-3 text-slate-600"><?= e($ro['service_name']) ?></td>
+                                            <td class="py-3"><?= render_status_badge($ro['status']) ?></td>
+                                            <td class="py-3 font-bold text-slate-900 text-right"><?= format_currency($ro['cost']) ?></td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
                             </tbody>
                         </table>
                     </div>
@@ -195,10 +210,10 @@ document.addEventListener('DOMContentLoaded', () => {
     new Chart(ctx, {
         type: 'line',
         data: {
-            labels: ['Apr 6', 'Apr 7', 'Apr 8', 'Apr 9', 'Apr 10', 'Apr 11', 'Apr 12'],
+            labels: <?= json_encode($chartLabels) ?>,
             datasets: [{
                 label: 'Revenue (₹)',
-                data: [15000, 22000, 31000, 28000, 39000, 42000, 45230],
+                data: <?= json_encode($chartData) ?>,
                 borderColor: '#7C3AED',
                 backgroundColor: gradient,
                 borderWidth: 3,
@@ -221,7 +236,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 y: {
                     grid: { color: 'rgba(226, 232, 240, 0.6)' },
                     ticks: {
-                        callback: val => '₹ ' + (val / 1000) + 'k'
+                        callback: val => '₹ ' + val
                     }
                 }
             }

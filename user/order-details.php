@@ -3,34 +3,40 @@
  * Live Order Details & Verification Receiver
  */
 
-require_once __DIR__ . '/includes/header.php';
-require_once __DIR__ . '/includes/sidebar.php';
+require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/../services/order-manager.php';
+require_once __DIR__ . '/../services/otp-manager.php';
 require_once __DIR__ . '/../services/wallet-manager.php';
 
 $db = get_db();
 $orderId = (int)($_GET['id'] ?? 0);
 $userId = (int)$currentUser['id'];
 
-// Handle action: cancel order
+// Handle action: cancel order or check status
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     require_csrf_token();
     $action = $_POST['action'] ?? '';
 
     if ($action === 'cancel_order') {
-        if (OrderManager::cancelOrder($orderId, $userId)) {
+        $cancelResult = OrderManager::executeCancelOrder($orderId, $userId, 'User requested cancellation');
+        if (!empty($cancelResult['success'])) {
             set_flash('success', 'Order cancelled successfully and funds refunded to your wallet.');
         } else {
-            set_flash('error', 'Unable to cancel this order. It may have already expired or completed.');
+            set_flash('error', $cancelResult['error'] ?? 'Unable to cancel this order. It may have already expired or completed.');
         }
         header("Location: /user/order-details.php?id=" . $orderId);
         exit;
     }
 
-    if ($action === 'simulate_otp') {
-        $simCode = rand(100000, 999999);
-        OrderManager::fulfillOtp($orderId, (string)$simCode, "Your verification code is {$simCode}. Valid for 10 minutes.");
-        set_flash('success', "Simulated verification code {$simCode} delivered!");
+    if ($action === 'check_status') {
+        $check = OtpManager::pollAndProcess($orderId);
+        if (!empty($check['received']) && !empty($check['otp_code'])) {
+            set_flash('success', "Verification code {$check['otp_code']} received successfully!");
+        } elseif (($check['status'] ?? '') === 'cancelled' || ($check['status'] ?? '') === 'expired') {
+            set_flash('info', "Order has been closed by carrier/timeout and refunded.");
+        } else {
+            set_flash('info', "Still awaiting SMS from carrier. The page checks continuously in real time.");
+        }
         header("Location: /user/order-details.php?id=" . $orderId);
         exit;
     }
@@ -53,8 +59,12 @@ if (!$order) {
     exit;
 }
 
-$expiresTimestamp = strtotime($order['expires_at']);
+$expiresTimestamp = strtotime($order['expires_at'] ?? 'now');
 $secondsRemaining = max(0, $expiresTimestamp - time());
+
+$pageTitle = 'Order ' . ($order['order_ref'] ?? '') . ' - OTP Services';
+require_once __DIR__ . '/includes/header.php';
+require_once __DIR__ . '/includes/sidebar.php';
 
 $flash = get_flash();
 ?>
@@ -71,6 +81,7 @@ $flash = get_flash();
         timer: null,
         copied: false,
         copiedCode: false,
+        checking: false,
         get formattedTime() {
             if (this.secondsLeft <= 0) return 'Expired';
             let m = Math.floor(this.secondsLeft / 60);
@@ -85,7 +96,7 @@ $flash = get_flash();
                     }
                 }, 1000);
 
-                // Poll for OTP status every 3.5 seconds
+                // Poll for real OTP status every 3.5 seconds
                 this.pollStatus();
             }
         },
@@ -96,17 +107,20 @@ $flash = get_flash();
                 .then(data => {
                     if (data.success && data.status) {
                         this.status = data.status;
-                        if (data.otp_code) {
-                            this.otpCode = data.otp_code;
-                            this.fullSms = data.full_sms || '';
+                        const code = data.otp_code || (data.order && data.order.otp_code);
+                        if (code) {
+                            this.otpCode = code;
+                            this.fullSms = data.full_sms || (data.order && data.order.full_sms) || '';
                             Swal.fire({
                                 icon: 'success',
                                 title: 'OTP Code Received!',
-                                text: 'Your verification code is: ' + data.otp_code,
+                                text: 'Your verification code is: ' + code,
                                 confirmButtonColor: '#7C3AED'
                             });
                         } else if (data.status === 'pending') {
                             setTimeout(() => this.pollStatus(), 3500);
+                        } else if (data.status === 'cancelled' || data.status === 'expired') {
+                            window.location.reload();
                         }
                     }
                 })
@@ -129,7 +143,7 @@ $flash = get_flash();
 
             <!-- Flash Alert -->
             <?php if ($flash): ?>
-                <div class="p-4 rounded-2xl text-sm font-medium border <?= $flash['type'] === 'error' ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200' ?> shadow-xs">
+                <div class="p-4 rounded-2xl text-sm font-medium border <?= $flash['type'] === 'error' ? 'bg-rose-50 text-rose-700 border-rose-200' : ($flash['type'] === 'info' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200') ?> shadow-xs">
                     <?= e($flash['message']) ?>
                 </div>
             <?php endif; ?>
@@ -173,7 +187,7 @@ $flash = get_flash();
                             <div class="text-xs uppercase tracking-wider font-semibold text-purple-300">Allocated Virtual Phone Number</div>
                             <div class="text-2xl sm:text-4xl font-mono font-black tracking-wide mt-1 text-white flex items-center gap-3">
                                 <span><?= e($order['phone_number']) ?></span>
-                                <button type="button" @click="copyNumber('<?= e($order['phone_number']) ?>')" class="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-all text-xs flex items-center gap-1.5">
+                                <button type="button" @click="copyNumber('<?= e($order['phone_number']) ?>')" class="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-all text-xs flex items-center gap-1.5 cursor-pointer">
                                     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                                     <span x-text="copied ? 'Copied!' : 'Copy'"></span>
                                 </button>
@@ -192,7 +206,7 @@ $flash = get_flash();
                         <div class="bg-purple-600 rounded-xl p-6 text-center space-y-2 shadow-lg shadow-purple-900/50">
                             <div class="text-xs font-semibold text-purple-200 uppercase tracking-widest">Received Verification Code</div>
                             <div class="text-4xl sm:text-5xl font-mono font-black tracking-widest text-white select-all" x-text="otpCode"></div>
-                            <button type="button" @click="copyOtp(otpCode)" class="mt-2 inline-flex items-center gap-2 px-4 py-1.5 rounded-lg bg-white text-purple-700 font-bold text-xs hover:bg-purple-50 transition-all shadow-sm">
+                            <button type="button" @click="copyOtp(otpCode)" class="mt-2 inline-flex items-center gap-2 px-4 py-1.5 rounded-lg bg-white text-purple-700 font-bold text-xs hover:bg-purple-50 transition-all shadow-sm cursor-pointer">
                                 <span x-text="copiedCode ? 'Code Copied!' : 'Copy Code'"></span>
                             </button>
                             <div x-show="fullSms !== ''" class="mt-3 text-xs text-purple-100 bg-purple-700/60 p-3 rounded-lg font-mono text-left" x-text="fullSms"></div>
@@ -203,10 +217,10 @@ $flash = get_flash();
                     <div x-show="status === 'pending' && otpCode === ''" class="p-6 rounded-xl bg-white/5 border border-white/10 text-center space-y-3">
                         <div class="inline-flex items-center gap-2 text-sm text-purple-200">
                             <span class="w-3 h-3 rounded-full bg-amber-400 animate-ping"></span>
-                            <span>Listening for SMS verification code...</span>
+                            <span>Listening for carrier SMS code...</span>
                         </div>
                         <p class="text-xs text-slate-300 max-w-md mx-auto">
-                            Enter this phone number into <strong class="text-white"><?= e($order['service_name']) ?></strong>. The verification SMS will appear here automatically within seconds.
+                            Enter this phone number into <strong class="text-white"><?= e($order['service_name']) ?></strong>. The verification SMS will appear here automatically as soon as received.
                         </p>
                     </div>
                 </div>
@@ -231,7 +245,7 @@ $flash = get_flash();
                     </div>
                 </div>
 
-                <!-- Action Buttons: Cancel / Simulate -->
+                <!-- Action Buttons: Back / Check Status / Cancel -->
                 <div class="flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-slate-100">
                     <div>
                         <a href="/user/orders.php" class="px-5 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-all">
@@ -241,12 +255,13 @@ $flash = get_flash();
 
                     <div class="flex flex-wrap items-center gap-3">
                         <?php if ($order['status'] === 'pending'): ?>
-                            <!-- Simulate Arrival Button (Instant interactive testing) -->
+                            <!-- Check Status Now (Real Provider Polling) -->
                             <form method="POST" action="/user/order-details.php?id=<?= $order['id'] ?>" class="inline">
                                 <?= csrf_field() ?>
-                                <input type="hidden" name="action" value="simulate_otp">
-                                <button type="submit" class="px-4 py-2.5 rounded-xl bg-purple-50 text-purple-700 hover:bg-purple-100 text-xs font-bold transition-all border border-purple-200 cursor-pointer">
-                                    Simulate OTP Arrival
+                                <input type="hidden" name="action" value="check_status">
+                                <button type="submit" class="px-4 py-2.5 rounded-xl bg-purple-50 text-purple-700 hover:bg-purple-100 text-xs font-bold transition-all border border-purple-200 cursor-pointer flex items-center gap-1.5">
+                                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                                    Check Status Now
                                 </button>
                             </form>
 
